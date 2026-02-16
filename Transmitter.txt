@@ -1,85 +1,161 @@
-New:-------------------------------------------------------------------------
-const int ledPin = 4; // GPIO 4 controls white LED
-const int bitDelay = 150; // Delay between bits in milliseconds
+// === VLC Transmitter for ESP32 ===
+const int whiteLedPin = 4;        // White LED for transmission
+const int photodiodePin = 34;     // Photodiode for receiving ACK
+const int gatePin = 18;           // Gate pin (optional, set HIGH)
+const int bitDelay = 150;         // Bit delay in ms
+const String preamble = "10101010"; // Preamble for synchronization
+const int ackWaitTime = 5000;     // Max wait time for ACK preamble
+
 
 void setup() {
-  pinMode(ledPin, OUTPUT);
+  pinMode(whiteLedPin, OUTPUT);
+  pinMode(photodiodePin, INPUT);
+  pinMode(gatePin, OUTPUT);
+  digitalWrite(gatePin, HIGH);    
   Serial.begin(115200);
-  Serial.println("Enter message to transmit:");
+  Serial.println("=== VLC Transmitter Ready ===");
 }
+
+
+void sendBit(bool bit) {
+  digitalWrite(whiteLedPin, bit ? HIGH : LOW);
+  delay(bitDelay);
+}
+
+
+void sendFrame(char c) {
+  String frame = "1"; // Start bit
+  sendBit(1);         // Send start bit
+  for (int b = 7; b >= 0; b--) {
+    bool bit = (c >> b) & 1;
+    frame += bit ? '1' : '0';
+    sendBit(bit);
+  }
+  frame += '0';       // Stop bit
+  sendBit(0);         // Send stop bit
+  Serial.print("Frame: "); Serial.print(frame);
+  Serial.print(" → '");
+  if (c >= 32 && c <= 126) Serial.print(c);
+  else Serial.print("\\x" + String((int)c, HEX));
+  Serial.println("'");
+}
+
+
+// Detect ACK preamble
+bool waitForAckPreamble(String &bits) {
+  bits = "";
+  unsigned long start = millis();
+  while (millis() - start < ackWaitTime) {
+    int bit = digitalRead(photodiodePin);
+    if (bit == 1) {
+      delay(bitDelay / 2); // Sample in middle of bit
+      bits += '1';
+      for (int i = 1; i < preamble.length(); i++) {
+        delay(bitDelay);
+        bit = digitalRead(photodiodePin);
+        bits += (bit ? '1' : '0');
+      }
+      return (bits == preamble);
+    }
+  }
+  return false;
+}
+
+
+String readAckMessage(int frames) {
+  String ackMsg = "";
+
+  for (int f = 0; f < frames; f++) {
+    // Wait for actual start bit (HIGH)
+    unsigned long start = millis();
+    while (digitalRead(photodiodePin) == 0) {
+      if (millis() - start > bitDelay * 2) {
+        Serial.println("Timeout waiting for ACK start bit");
+        return ackMsg;
+      }
+    }
+
+    // Move to middle of start bit
+    delay(bitDelay / 2);
+
+    String frame = "1"; // start bit
+    for (int b = 0; b < 8; b++) {
+      delay(bitDelay);
+      frame += (digitalRead(photodiodePin) ? '1' : '0');
+    }
+
+    // Read stop bit
+    delay(bitDelay);
+    int stopBit = digitalRead(photodiodePin);
+    frame += (stopBit ? '1' : '0');
+
+    // Basic check
+    if (stopBit != 0) {
+      Serial.println("Invalid stop bit, skipping frame");
+      continue;
+    }
+
+    // Decode character
+    char ch = (char)strtol(frame.substring(1, 9).c_str(), nullptr, 2);
+
+    Serial.print("ACK Frame: "); Serial.print(frame);
+    Serial.print(" → '");
+    if (ch >= 32 && ch <= 126) Serial.print(ch);
+    else Serial.print("\\x" + String((int)ch, HEX));
+    Serial.println("'");
+
+    ackMsg += ch;
+  }
+  return ackMsg;
+}
+
 
 void loop() {
   if (Serial.available()) {
     String message = Serial.readStringUntil('\n');
-    Serial.println("Transmitting: " + message);
+    message.trim(); // Remove any trailing whitespace
+    Serial.println("\n--- Transmission Initiated ---");
+    Serial.print("Message to transmit: "); Serial.println(message);
 
-    // Send preamble first (8 bits: 10101010)
-    String preamble = "10101010";
-    for (int i = 0; i < preamble.length(); i++) {
-      int bit = (preamble.charAt(i) == '1') ? 1 : 0;
-      Serial.print(bit);
-      digitalWrite(ledPin, bit);  // LED ON for 1, OFF for 0
+
+    // Send preamble
+    Serial.print("Preamble (Binary): ");
+    for (char b : preamble) {
+      sendBit(b == '1');
+      Serial.print(b);
+    }
+    Serial.println();
+
+
+    // Send message frames
+    Serial.println("--- Sending Frames ---");
+    for (char c : message) {
+      sendFrame(c);
       delay(bitDelay);
     }
 
-    // Send message bits as before
-    for (int i = 0; i < message.length(); i++) {
-      char c = message.charAt(i);
-      for (int b = 7; b >= 0; b--) {
-        int bit = (c >> b) & 1;
-        Serial.print(bit);
-        digitalWrite(ledPin, bit); // LED ON for 1, OFF for 0
-        delay(bitDelay);
-      }
+
+    // End marker (frame for null char)
+    sendFrame((char)0x00);
+    Serial.println("--- Transmission Complete ---");
+
+
+    delay(500); // Allow receiver time to switch to ACK
+
+
+    Serial.println("Waiting for acknowledgment...");
+    String ackBits;
+    if (!waitForAckPreamble(ackBits)) {
+      Serial.println("No acknowledgment received (preamble not found).");
+      Serial.println("--- Ready for Next Transmission ---\n");
+      return;
     }
 
-    digitalWrite(ledPin, LOW);  // Turn off LED after transmission
-    Serial.println("\nTransmission complete.\n");
-  }
-}
 
-
-
-
-
-
-
-
-OLD:----------------------------------------------------------------------------
-
-
-const int ledPin = 4;  // GPIO connected to transmitting LED
-String data = "HELLO"; // Data to send
-
-void setup() {
-  pinMode(ledPin, OUTPUT);
-  delay(1000); // Wait a moment
-}
-
-void loop() {
-  for (int i = 0; i < data.length(); i++) {
-    char c = data.charAt(i);         // Get character
-    String binary = String(c, BIN);  // Convert to binary
-
-    // Pad with leading zeros to make it 8-bit
-    while (binary.length() < 8) {
-      binary = "0" + binary;
-    }
-
-    // Transmit each bit
-    for (int j = 0; j < 8; j++) {
-      if (binary[j] == '1') {
-        digitalWrite(ledPin, HIGH);
-      } else {
-        digitalWrite(ledPin, LOW);
-      }
-      delay(200); // Delay between bits (adjustable)
-    }
-
-    // Small gap between characters
-    digitalWrite(ledPin, LOW);
-    delay(400);
+    Serial.println("\n--- Receiving Acknowledgment ---");
+    String ackMsg = readAckMessage(3); // Expecting 'ACK'
+    Serial.println("--- Acknowledgment Received ---");
+    Serial.print("Decoded Acknowledgment: "); Serial.println(ackMsg);
+    Serial.println("--- Ready for Next Transmission ---\n");
   }
-
-  while (true); // Stop after one transmission
 }
