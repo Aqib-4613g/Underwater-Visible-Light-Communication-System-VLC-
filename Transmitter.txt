@@ -1,0 +1,85 @@
+New:-------------------------------------------------------------------------
+const int ledPin = 4; // GPIO 4 controls white LED
+const int bitDelay = 150; // Delay between bits in milliseconds
+
+void setup() {
+  pinMode(ledPin, OUTPUT);
+  Serial.begin(115200);
+  Serial.println("Enter message to transmit:");
+}
+
+void loop() {
+  if (Serial.available()) {
+    String message = Serial.readStringUntil('\n');
+    Serial.println("Transmitting: " + message);
+
+    // Send preamble first (8 bits: 10101010)
+    String preamble = "10101010";
+    for (int i = 0; i < preamble.length(); i++) {
+      int bit = (preamble.charAt(i) == '1') ? 1 : 0;
+      Serial.print(bit);
+      digitalWrite(ledPin, bit);  // LED ON for 1, OFF for 0
+      delay(bitDelay);
+    }
+
+    // Send message bits as before
+    for (int i = 0; i < message.length(); i++) {
+      char c = message.charAt(i);
+      for (int b = 7; b >= 0; b--) {
+        int bit = (c >> b) & 1;
+        Serial.print(bit);
+        digitalWrite(ledPin, bit); // LED ON for 1, OFF for 0
+        delay(bitDelay);
+      }
+    }
+
+    digitalWrite(ledPin, LOW);  // Turn off LED after transmission
+    Serial.println("\nTransmission complete.\n");
+  }
+}
+
+
+
+
+
+
+
+
+OLD:----------------------------------------------------------------------------
+
+
+const int ledPin = 4;  // GPIO connected to transmitting LED
+String data = "HELLO"; // Data to send
+
+void setup() {
+  pinMode(ledPin, OUTPUT);
+  delay(1000); // Wait a moment
+}
+
+void loop() {
+  for (int i = 0; i < data.length(); i++) {
+    char c = data.charAt(i);         // Get character
+    String binary = String(c, BIN);  // Convert to binary
+
+    // Pad with leading zeros to make it 8-bit
+    while (binary.length() < 8) {
+      binary = "0" + binary;
+    }
+
+    // Transmit each bit
+    for (int j = 0; j < 8; j++) {
+      if (binary[j] == '1') {
+        digitalWrite(ledPin, HIGH);
+      } else {
+        digitalWrite(ledPin, LOW);
+      }
+      delay(200); // Delay between bits (adjustable)
+    }
+
+    // Small gap between characters
+    digitalWrite(ledPin, LOW);
+    delay(400);
+  }
+
+  while (true); // Stop after one transmission
+}
