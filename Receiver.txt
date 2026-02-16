@@ -1,0 +1,157 @@
+New:--------------------------------------------------------------------------------------
+
+
+const int signalPin = 34;       // Photodiode input pin
+const int gatePin = 18;         // Transistor bias (if used)
+const int bitDelay = 150;       // Bit duration in ms, must match transmitter
+const int idleTimeout = 3000;   // Idle timeout to detect end of transmission
+
+String receivedBits = "";
+bool receiving = false;
+unsigned long lastSignalTime = 0;
+
+const String preamble = "10101010";  // 8-bit known start pattern
+
+// Decode binary string to ASCII text
+String decodeBits(String bits) {
+  String message = "";
+  for (int i = 0; i + 8 <= bits.length(); i += 8) {
+    String byteStr = bits.substring(i, i + 8);
+    char c = (char)strtol(byteStr.c_str(), nullptr, 2);
+    message += c;
+  }
+  return message;
+}
+
+// Helper: Check if the receivedBits contains the preamble at the start
+bool checkPreamble(const String& bits) {
+  if (bits.length() < preamble.length()) return false;
+  return bits.substring(0, preamble.length()) == preamble;
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(signalPin, INPUT);
+  pinMode(gatePin, OUTPUT);
+  digitalWrite(gatePin, HIGH); // Enable transistor bias if used
+  Serial.println("=== VLC Receiver Ready ===");
+}
+
+void loop() {
+  int bit = digitalRead(signalPin);
+
+  if (!receiving) {
+    // Wait for start of transmission indicated by preamble detection
+    // To detect preamble: we wait for first '1', then sample next bits to match pattern
+
+    if (bit == 1) {
+      receiving = true;
+      receivedBits = "1";
+      lastSignalTime = millis();
+      Serial.println("Started receiving...");
+      delay(bitDelay);  // Wait one bit period to get next bit
+    }
+  } else {
+    // Receive bits one by one at bitDelay interval
+    bit = digitalRead(signalPin);
+    receivedBits += (bit ? "1" : "0");
+    Serial.print(bit ? "1" : "0");
+    delay(bitDelay);
+
+    if (bit == 1) {
+      lastSignalTime = millis();
+    }
+
+    // Check if we have received enough bits to verify preamble
+    if (receivedBits.length() == preamble.length()) {
+      if (!checkPreamble(receivedBits)) {
+        // Preamble mismatch: discard bits and wait again
+        Serial.println("\nPreamble not matched, resyncing...");
+        receiving = false;
+        receivedBits = "";
+        return;
+      } else {
+        Serial.println("\nPreamble detected, receiving message...");
+      }
+    }
+
+    // When idle for too long after receiving started, consider transmission over
+    if (millis() - lastSignalTime > idleTimeout) {
+      // Trim trailing zeros after last '1'
+      int lastOneIndex = receivedBits.lastIndexOf('1') + 1;
+      String usefulBits = receivedBits.substring(preamble.length(), lastOneIndex);  // skip preamble bits
+
+      Serial.println("\n--- Transmission Complete ---");
+      Serial.print("Received binary (without preamble): ");
+      Serial.println(usefulBits);
+
+      String decodedMessage = decodeBits(usefulBits);
+      Serial.print("Decoded message: ");
+      Serial.println(decodedMessage.length() > 0 ? decodedMessage : "(none)");
+      Serial.println("-----------------------------\n");
+      Serial.println("Waiting for next transmission...");
+      receiving = false;
+      receivedBits = "";
+    }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+OLD:- --------------------------------------------------------------------
+
+
+const int receiverPin = 34; // Analog pin connected to photodiode/LED
+const int threshold = 1000; // Adjust based on ambient light
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("Ready to receive...");
+}
+
+void loop() {
+  String binaryStream = "";
+
+  // Read 5 characters = 5 x 8 bits = 40 bits
+  for (int i = 0; i < 40; i++) {
+    int lightLevel = analogRead(receiverPin);
+
+    if (lightLevel > threshold) {
+      binaryStream += "1";
+    } else {
+      binaryStream += "0";
+    }
+
+    delay(200); // Must match transmitter delay
+  }
+
+  Serial.println("Received binary: " + binaryStream);
+
+  // Decode binary to string
+  String decoded = "";
+  for (int i = 0; i < binaryStream.length(); i += 8) {
+    String byteString = binaryStream.substring(i, i + 8);
+    char c = strtol(byteString.c_str(), NULL, 2);
+    decoded += c;
+  }
+
+  Serial.println("Decoded message: " + decoded);
+  delay(5000); // Wait before next read
+}
